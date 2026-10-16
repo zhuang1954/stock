@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>美股板塊輪動</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1b1f24; --muted: #6a737d; --border: #e1e4e8;
+    --up: 38, 166, 91; --down: 214, 69, 65; --accent: #2f6fed;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0f1216; --card: #171b21; --text: #e6e9ee; --muted: #8b949e; --border: #2a303a; --accent: #6b9bff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 -apple-system, "Segoe UI", "Noto Sans TC", sans-serif; }
+  header { padding: 20px 24px 8px; display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: baseline; }
+  h1 { font-size: 20px; margin: 0; }
+  .meta { color: var(--muted); font-size: 12px; }
+  main { padding: 8px 24px 32px; display: grid; gap: 16px; max-width: 1200px; margin: 0 auto; }
+  section { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  h2 { font-size: 15px; margin: 0 0 12px; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+  .hint { color: var(--muted); font-size: 12px; font-weight: 400; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; cursor: pointer; user-select: none; }
+  th.sorted { color: var(--accent); }
+  td.cell { font-weight: 500; }
+  .tick { font-weight: 600; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button { background: transparent; color: var(--text); border: 0; padding: 4px 12px; cursor: pointer; font: inherit; font-size: 12px; }
+  .seg button.on { background: var(--accent); color: #fff; }
+  .chart { width: 100%; height: 360px; }
+  #rrg { height: 520px; }
+  .scroll { overflow-x: auto; }
+  @media (max-width: 600px) { main { padding: 8px 12px 24px; } header { padding: 16px 12px 8px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>美股板塊輪動儀表板</h1>
+  <span class="meta" id="meta"></span>
+</header>
+<main>
+  <section>
+    <h2>報酬熱力圖 <span class="hint">點欄位標題可排序；顏色依各欄位內的相對大小</span></h2>
+    <div class="scroll"><table id="heat"></table></div>
+  </section>
+
+  <section>
+    <h2>
+      <span>相對強弱（對 SPY 超額報酬）</span>
+      <span class="seg" id="periodSeg"></span>
+    </h2>
+    <div id="rs" class="chart"></div>
+  </section>
+
+  <section>
+    <h2>
+      <span>RRG 相對輪動圖（週線）<span class="hint">　右上領先 ／ 右下轉弱 ／ 左下落後 ／ 左上改善；線尾為最新位置</span></span>
+      <span class="seg" id="trailSeg"></span>
+    </h2>
+    <div id="rrg" class="chart"></div>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script src="data.js"></script>
+<script>
+const D = window.DATA;
+const tickers = Object.keys(D.names);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const fmt = v => (v > 0 ? "+" : "") + v.toFixed(2) + "%";
+
+document.getElementById("meta").textContent =
+  `資料日期 ${D.asOf}　｜　基準 ${D.bench}　｜　產生於 ${D.generated}`;
+
+/* ---------- 熱力圖 ---------- */
+let sortKey = D.periods[1], sortDir = -1;
+function renderHeat() {
+  const rows = tickers.map(t => ({ t, ...D.returns[t] }));
+  rows.sort((a, b) => sortDir * (a[sortKey] - b[sortKey]));
+  const maxAbs = {};
+  D.periods.forEach(p => maxAbs[p] = Math.max(...tickers.map(t => Math.abs(D.returns[t][p])), 0.01));
+  let html = "<tr><th>板塊</th>" + D.periods.map(p =>
+    `<th data-k="${p}" class="${p === sortKey ? "sorted" : ""}">${p}${p === sortKey ? (sortDir < 0 ? " ▼" : " ▲") : ""}</th>`).join("") + "</tr>";
+  rows.forEach(r => {
+    html += `<tr><td><span class="tick">${r.t}</span> <span class="meta">${D.names[r.t]}</span></td>`;
+    D.periods.forEach(p => {
+      const v = r[p], a = Math.min(Math.abs(v) / maxAbs[p], 1) * 0.75;
+      const rgb = v >= 0 ? css("--up") : css("--down");
+      html += `<td class="cell" style="background:rgba(${rgb},${a.toFixed(2)})">${fmt(v)}</td>`;
+    });
+    html += "</tr>";
+  });
+  html += `<tr><td><span class="tick">${D.bench}</span> <span class="meta">基準</span></td>` +
+    D.periods.map(p => `<td class="cell">${fmt(D.benchReturns[p])}</td>`).join("") + "</tr>";
+  document.getElementById("heat").innerHTML = html;
+  document.querySelectorAll("#heat th[data-k]").forEach(th => th.onclick = () => {
+    const k = th.dataset.k;
+    if (k === sortKey) sortDir *= -1; else { sortKey = k; sortDir = -1; }
+    renderHeat();
+  });
+}
+
+/* ---------- 相對強弱 ---------- */
+let period = D.periods[1];
+const rsChart = echarts.init(document.getElementById("rs"));
+function renderRS() {
+  const arr = tickers.map(t => ({ t, v: +(D.returns[t][period] - D.benchReturns[period]).toFixed(2) }))
+                     .sort((a, b) => a.v - b.v);
+  const up = `rgb(${css("--up")})`, down = `rgb(${css("--down")})`;
+  rsChart.setOption({
+    grid: { left: 90, right: 56, top: 8, bottom: 24 },
+    xAxis: { type: "value", axisLabel: { color: css("--muted"), formatter: "{value}%" },
+             splitLine: { lineStyle: { color: css("--border") } } },
+    yAxis: { type: "category", data: arr.map(a => `${a.t} ${D.names[a.t]}`),
+             axisLabel: { color: css("--text") }, axisLine: { lineStyle: { color: css("--border") } } },
+    tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, valueFormatter: v => fmt(v) },
+    series: [{ type: "bar", data: arr.map(a => ({ value: a.v, itemStyle: { color: a.v >= 0 ? up : down } })),
+               label: { show: true, position: "right", color: css("--text"), formatter: p => fmt(p.value) } }]
+  }, true);
+}
+const periodSeg = document.getElementById("periodSeg");
+D.periods.forEach(p => {
+  const b = document.createElement("button");
+  b.textContent = p; b.className = p === period ? "on" : "";
+  b.onclick = () => { period = p; [...periodSeg.children].forEach(c => c.className = c === b ? "on" : ""); renderRS(); };
+  periodSeg.appendChild(b);
+});
+
+/* ---------- RRG ---------- */
+let trail = 10;
+const rrgChart = echarts.init(document.getElementById("rrg"));
+const palette = ["#2f6fed", "#e8590c", "#2b9348", "#9c36b5", "#d6336c", "#0c8599", "#e0a100", "#5c7cfa", "#e03131", "#66a80f", "#868e96"];
+function renderRRG() {
+  const all = tickers.flatMap(t => D.rrg[t].slice(-trail));
+  const xs = all.map(p => p[0]), ys = all.map(p => p[1]);
+  const pad = 0.5;
+  const xMin = Math.min(...xs, 100) - pad, xMax = Math.max(...xs, 100) + pad;
+  const yMin = Math.min(...ys, 100) - pad, yMax = Math.max(...ys, 100) + pad;
+  const series = tickers.map((t, i) => {
+    const pts = D.rrg[t].slice(-trail), col = palette[i % palette.length];
+    return {
+      name: t, type: "line", data: pts, showSymbol: true, symbolSize: (v, p) => p.dataIndex === pts.length - 1 ? 12 : 4,
+      lineStyle: { color: col, width: 1.5, opacity: 0.7 }, itemStyle: { color: col },
+      endLabel: { show: true, formatter: t, color: col, fontWeight: 600 },
+      tooltip: { formatter: p => `${t} ${D.names[t]}<br>RS-Ratio ${p.value[0]}<br>RS-Momentum ${p.value[1]}` },
+      markLine: i === 0 ? { silent: true, symbol: "none", label: { show: false },
+        lineStyle: { color: css("--muted"), type: "dashed" }, data: [{ xAxis: 100 }, { yAxis: 100 }] } : undefined,
+      markArea: i === 0 ? { silent: true, label: { color: css("--muted"), fontSize: 12, position: "inside" }, data: [
+        [{ name: "改善", coord: [xMin, 100], itemStyle: { color: "rgba(47,111,237,0.06)" } }, { coord: [100, yMax] }],
+        [{ name: "領先", coord: [100, 100], itemStyle: { color: "rgba(38,166,91,0.08)" } }, { coord: [xMax, yMax] }],
+        [{ name: "落後", coord: [xMin, yMin], itemStyle: { color: "rgba(214,69,65,0.08)" } }, { coord: [100, 100] }],
+        [{ name: "轉弱", coord: [100, yMin], itemStyle: { color: "rgba(224,161,0,0.08)" } }, { coord: [xMax, 100] }]
+      ] } : undefined
+    };
+  });
+  rrgChart.setOption({
+    grid: { left: 52, right: 56, top: 16, bottom: 44 },
+    tooltip: { trigger: "item" },
+    xAxis: { type: "value", name: "RS-Ratio（相對強度）", nameLocation: "middle", nameGap: 28, min: xMin, max: xMax,
+             nameTextStyle: { color: css("--muted") }, axisLabel: { color: css("--muted") }, splitLine: { show: false } },
+    yAxis: { type: "value", name: "RS-Momentum（動能）", nameLocation: "middle", nameGap: 36, min: yMin, max: yMax,
+             nameTextStyle: { color: css("--muted") }, axisLabel: { color: css("--muted") }, splitLine: { show: false } },
+    series
+  }, true);
+}
+const trailSeg = document.getElementById("trailSeg");
+[[4, "4 週"], [10, "10 週"]].forEach(([n, label]) => {
+  const b = document.createElement("button");
+  b.textContent = "軌跡 " + label; b.className = n === trail ? "on" : "";
+  b.onclick = () => { trail = n; [...trailSeg.children].forEach(c => c.className = c === b ? "on" : ""); renderRRG(); };
+  trailSeg.appendChild(b);
+});
+
+function renderAll() { renderHeat(); renderRS(); renderRRG(); }
+renderAll();
+window.addEventListener("resize", () => { rsChart.resize(); rrgChart.resize(); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", renderAll);
+</script>
+</body>
+</html>
